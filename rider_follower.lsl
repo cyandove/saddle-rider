@@ -55,9 +55,9 @@ float   gStep              = 0.10; // Adjustment increment; cycles via Step butt
 
 // Offset menu buttons (displayed bottom-to-top, 3 per row):
 // Row 3 (top): [Step ][Reset][Done ]
-// Row 2:       [Y+   ][Z-   ][Z+   ]
-// Row 1 (bot): [X-   ][X+   ][Y-   ]
-list MENU_BUTTONS = ["X-", "X+", "Y-", "Y+", "Z-", "Z+", "Step", "Reset", "Done"];
+// Row 2:       [X+   ][Y+   ][Z+   ]
+// Row 1 (bot): [X-   ][Y-   ][Z-   ]
+list MENU_BUTTONS = ["X-", "Y-", "Z-", "X+", "Y+", "Z+", "Step", "Reset", "Done"];
 
 // ---- HELPERS -----------------------------------------------------------
 

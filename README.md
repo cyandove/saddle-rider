@@ -45,8 +45,8 @@ Touch the Follower prim while stopped to open the offset adjustment menu:
 
 ```
 [Step ][Reset][Done ]
-[Y+   ][Z-   ][Z+   ]
-[X-   ][X+   ][Y-   ]
+[X+   ][Y+   ][Z+   ]
+[X-   ][Y-   ][Z-   ]
 ```
 
 - **X** moves the rider forward/back, **Y** left/right, **Z** up/down
