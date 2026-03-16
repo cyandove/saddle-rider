@@ -53,6 +53,7 @@ integer gDialogChannel;                   // Private channel for all llDialog re
 integer gDialogListener       = -1;       // Dialog/menu listener handle
 integer gRiding               = FALSE;
 integer gHasPerms             = FALSE;
+integer gAnimPlaying          = FALSE;
 integer gPendingChannel       = 0;        // Channel offered by a nearby saddle
 key     gPendingMountOwner    = NULL_KEY; // Mount owner key from pending pairing offer
 integer gMenuOpen             = FALSE;    // TRUE while offset menu is showing
@@ -138,7 +139,7 @@ stopRiding()
     llStopMoveToTarget();
     gRiding = FALSE;
 
-    if (gHasPerms && RIDING_ANIM != "") llStopAnimation(RIDING_ANIM);
+    if (gAnimPlaying) { llStopAnimation(RIDING_ANIM); gAnimPlaying = FALSE; }
 
     // Reopen discovery listener so a new saddle can re-pair.
     if (gDiscoveryListener == -1)
@@ -195,10 +196,10 @@ default
             suppressDefaultAnims();
 
             if (RIDING_ANIM != "" && llGetInventoryType(RIDING_ANIM) == INVENTORY_ANIMATION)
+            {
                 llStartAnimation(RIDING_ANIM);
-            else if (RIDING_ANIM != "")
-                llOwnerSay("[Rider] Warning: animation '" + RIDING_ANIM
-                           + "' not found in inventory. Add it or set RIDING_ANIM to \"\".");
+                gAnimPlaying = TRUE;
+            }
         }
     }
 
@@ -322,6 +323,7 @@ default
         else
         {
             gHasPerms          = FALSE;
+            gAnimPlaying       = FALSE;
             gChannel           = 0;
             gMountOwner        = NULL_KEY;
             gMenuOpen          = FALSE;
