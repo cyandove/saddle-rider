@@ -12,14 +12,17 @@
 //      If you have no custom animation, the script still works.
 //   3. Have the mount touch her saddle; a pairing dialog will appear on
 //      your screen. Click Yes to start following.
-//   4. Touch your prim while stopped to open the offset adjustment menu.
+//   4. Touch your prim at any time to open the offset adjustment menu.
+//      Adjustments take effect immediately while riding and are saved
+//      per mount, so your preferred position is restored automatically
+//      each time you pair with the same mount.
 //   (Phantom is set automatically by the script.)
 // ------------------------------------------------------------------------
 
 // ---- CONFIGURATION -----------------------------------------------------
 
 // Saddle offset in LOCAL mount space: X=forward, Y=left, Z=up.
-// Adjustable at runtime via the touch menu -- no script edit needed.
+// Loaded from linkset data on pairing; adjustable at runtime via touch menu.
 vector gSaddleOffset = <0.0, 0.0, 0.8>;
 
 // llMoveToTarget tau. Lower = snappier tracking but more jitter.
@@ -42,16 +45,18 @@ list SUPPRESS_ANIMS = ["sit", "sit_generic", "sit_to_stand", "stand",
                        "stand_1", "stand_2", "stand_3", "stand_4"];
 
 // ---- GLOBALS -----------------------------------------------------------
-integer gChannel           = 0;    // 0 = not yet paired
-integer gListener          = -1;   // Data channel listener handle
-integer gDiscoveryListener = -1;   // Discovery channel listener handle
-integer gDialogChannel;            // Private channel for all llDialog responses
-integer gDialogListener    = -1;   // Dialog/menu listener handle
-integer gRiding            = FALSE;
-integer gHasPerms          = FALSE;
-integer gPendingChannel    = 0;    // Channel offered by a nearby saddle
-integer gMenuOpen          = FALSE; // TRUE while offset menu is showing
-float   gStep              = 0.10; // Adjustment increment; cycles via Step button
+integer gChannel              = 0;        // 0 = not yet paired
+key     gMountOwner           = NULL_KEY; // Avatar key of the current mount
+integer gListener             = -1;       // Data channel listener handle
+integer gDiscoveryListener    = -1;       // Discovery channel listener handle
+integer gDialogChannel;                   // Private channel for all llDialog responses
+integer gDialogListener       = -1;       // Dialog/menu listener handle
+integer gRiding               = FALSE;
+integer gHasPerms             = FALSE;
+integer gPendingChannel       = 0;        // Channel offered by a nearby saddle
+key     gPendingMountOwner    = NULL_KEY; // Mount owner key from pending pairing offer
+integer gMenuOpen             = FALSE;    // TRUE while offset menu is showing
+float   gStep                 = 0.10;     // Adjustment increment; cycles via Step button
 
 // Offset menu buttons (displayed bottom-to-top, 3 per row):
 // Row 3 (top): [Step ][Reset][Done ]
@@ -68,6 +73,12 @@ string fmt(float f)
     integer dot = llSubStringIndex(s, ".");
     if (dot == -1) return s;
     return llGetSubString(s, 0, dot + 2);
+}
+
+// Linkset data key for a given mount owner's offset.
+string lsdKey(key mountOwner)
+{
+    return "offset_" + (string)mountOwner;
 }
 
 suppressDefaultAnims()
@@ -88,8 +99,9 @@ cycleStep()
 string offsetMenuMsg()
 {
     string hint;
-    if (gChannel != 0) hint = "Done = save + start following";
-    else               hint = "Done = save + close";
+    if (gRiding)            hint = "Changes apply live. Done = close menu.";
+    else if (gChannel != 0) hint = "Done = close + start following";
+    else                    hint = "Done = close";
     return "Saddle Offset  (step: " + fmt(gStep) + " m)\n"
          + "X " + fmt(gSaddleOffset.x)
          + "   Y " + fmt(gSaddleOffset.y)
@@ -100,7 +112,6 @@ string offsetMenuMsg()
 
 openOffsetMenu()
 {
-    // Close any existing dialog listener before opening a fresh one.
     if (gDialogListener != -1) llListenRemove(gDialogListener);
     gDialogListener = llListen(gDialogChannel, "", llGetOwner(), "");
     gMenuOpen = TRUE;
@@ -114,13 +125,10 @@ startRiding()
     gListener = llListen(gChannel, "", NULL_KEY, "");
     gRiding   = TRUE;
 
-    // While riding, close discovery listener to save a listener slot.
+    // Close discovery listener while riding to free a listener slot.
     if (gDiscoveryListener != -1) { llListenRemove(gDiscoveryListener); gDiscoveryListener = -1; }
-    if (gDialogListener    != -1) { llListenRemove(gDialogListener);    gDialogListener    = -1; }
-    gMenuOpen = FALSE;
-    llSetTimerEvent(0.0);
 
-    llOwnerSay("[Rider] Following on channel " + (string)gChannel + ". Touch to stop.");
+    llOwnerSay("[Rider] Following on channel " + (string)gChannel + ". Touch to adjust offset.");
     llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
 }
 
@@ -145,8 +153,8 @@ handleMenuButton(string btn)
         gDialogListener = -1;
         gMenuOpen = FALSE;
         llSetTimerEvent(0.0);
-        if (gChannel != 0) startRiding();
-        else llOwnerSay("[Rider] Offset saved. Pair with a saddle to start following.");
+        if (!gRiding && gChannel != 0) startRiding();
+        else if (!gRiding) llOwnerSay("[Rider] Offset saved. Pair with a saddle to start following.");
         return;
     }
 
@@ -159,7 +167,11 @@ handleMenuButton(string btn)
     else if (btn == "Z-")    gSaddleOffset.z -= gStep;
     else if (btn == "Z+")    gSaddleOffset.z += gStep;
 
-    // Refresh the dialog to show updated values; reset inactivity timer.
+    // Persist immediately, keyed to this mount, so it survives resets and relogs.
+    if (gMountOwner != NULL_KEY)
+        llLinksetDataWrite(lsdKey(gMountOwner), (string)gSaddleOffset);
+
+    // Refresh the dialog; reset inactivity timer.
     llSetTimerEvent(60.0);
     llDialog(llGetOwner(), offsetMenuMsg(), MENU_BUTTONS, gDialogChannel);
 }
@@ -199,8 +211,9 @@ default
             if (llList2String(parts, 0) != "SADDLE_PAIR") return;
             if (llGetListLength(parts) < 4) return;
 
-            gPendingChannel = (integer)llList2String(parts, 3);
-            string mountName = llList2String(parts, 2);
+            gPendingMountOwner = (key)llList2String(parts, 1);
+            string mountName   = llList2String(parts, 2);
+            gPendingChannel    = (integer)llList2String(parts, 3);
 
             if (gDialogListener != -1) llListenRemove(gDialogListener);
             gDialogListener = llListen(gDialogChannel, "", llGetOwner(), "");
@@ -229,14 +242,21 @@ default
 
                 if (msg == "Yes")
                 {
-                    gChannel = gPendingChannel;
+                    gChannel    = gPendingChannel;
+                    gMountOwner = gPendingMountOwner;
+
+                    // Load the saved offset for this mount, if any.
+                    string stored = llLinksetDataRead(lsdKey(gMountOwner));
+                    if (stored != "") gSaddleOffset = (vector)stored;
+
                     llOwnerSay("[Rider] Paired! Channel: " + (string)gChannel);
                     startRiding();
                 }
                 else
                 {
                     llOwnerSay("[Rider] Pairing declined.");
-                    gPendingChannel = 0;
+                    gPendingChannel    = 0;
+                    gPendingMountOwner = NULL_KEY;
                 }
             }
             return;
@@ -258,11 +278,11 @@ default
         }
     }
 
-    // Touch while riding = stop. Touch while stopped = open offset menu.
+    // Touch at any time to open the offset menu.
+    // Does not stop riding -- adjustments apply live while following.
     touch_start(integer n)
     {
         if (llDetectedKey(0) != llGetOwner()) return;
-        if (gRiding) stopRiding();
         openOffsetMenu();
     }
 
@@ -283,7 +303,8 @@ default
         }
         else
         {
-            gPendingChannel = 0;
+            gPendingChannel    = 0;
+            gPendingMountOwner = NULL_KEY;
             llOwnerSay("[Rider] Pairing dialog timed out.");
         }
     }
@@ -300,10 +321,11 @@ default
         }
         else
         {
-            gHasPerms  = FALSE;
-            gChannel   = 0;
-            gMenuOpen  = FALSE;
-            gDialogChannel = -(integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
+            gHasPerms          = FALSE;
+            gChannel           = 0;
+            gMountOwner        = NULL_KEY;
+            gMenuOpen          = FALSE;
+            gDialogChannel     = -(integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
             if (gDiscoveryListener != -1) { llListenRemove(gDiscoveryListener); gDiscoveryListener = -1; }
             gDiscoveryListener = llListen(DISCOVERY_CHANNEL, "", NULL_KEY, "");
             llOwnerSay("[Rider] Re-attached. Have the mount touch her saddle to pair.");
