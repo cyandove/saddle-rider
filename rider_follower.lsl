@@ -87,8 +87,9 @@ cycleStep()
 
 string offsetMenuMsg()
 {
-    string hint = (gChannel != 0) ? "Done = save + start following"
-                                  : "Done = save + close";
+    string hint;
+    if (gChannel != 0) hint = "Done = save + start following";
+    else               hint = "Done = save + close";
     return "Saddle Offset  (step: " + fmt(gStep) + " m)\n"
          + "X " + fmt(gSaddleOffset.x)
          + "   Y " + fmt(gSaddleOffset.y)
