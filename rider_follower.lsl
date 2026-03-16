@@ -10,9 +10,9 @@
 //   2. Drop your riding animation (named "riding_pose") into the prim inventory.
 //      If you have no custom animation, the script still works -- it will
 //      just suppress the default sit pose and leave the rider in their AO.
-//   3. Set the prim to Phantom.
-//   4. Set gChannel below to match the mount's channel (or use notecard).
-//   5. Adjust SADDLE_OFFSET so the rider sits at the right height/position.
+//   3. Set gChannel below to match the mount's channel (or use notecard).
+//   4. Adjust SADDLE_OFFSET so the rider sits at the right height/position.
+//   (Phantom is set automatically by the script.)
 // ------------------------------------------------------------------------
 
 // ---- CONFIGURATION -----------------------------------------------------
@@ -111,6 +111,7 @@ default
 {
     state_entry()
     {
+        llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_PHANTOM, TRUE]);
         llOwnerSay("[Rider] Follower attachment ready. Touch to start/stop.");
         // Auto-start on rez/attach. Remove this line if you prefer manual start.
         startRiding();

@@ -6,9 +6,9 @@
 //
 // Setup:
 //   1. Drop this script into the saddle prim.
-//   2. Set the prim to Phantom to avoid capsule collisions.
-//   3. Touch the saddle to hear your channel number, then share it with
+//   2. Touch the saddle to hear your channel number, then share it with
 //      your rider (or use the notecard method described in the README).
+//   (Phantom is set automatically by the script.)
 // ------------------------------------------------------------------------
 
 integer gChannel;      // Derived from object key at startup
@@ -25,6 +25,7 @@ default
 {
     state_entry()
     {
+        llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_PHANTOM, TRUE]);
         gChannel      = channelFromKey(llGetKey());
         gBroadcasting = TRUE;
         llSetTimerEvent(0.1); // 10 Hz broadcast
