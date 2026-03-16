@@ -16,30 +16,36 @@
 
 ### Step 1 — Mount sets up the Saddle
 1. Create a small prim (box or sphere, can be invisible/transparent).
-2. In **Edit > Object tab**, tick **Phantom**.
-3. Drop `mount_transmitter.lsl` into the prim's Contents.
-4. Attach the prim to a comfortable point (Spine, Chest, or Pelvis).
-5. **Touch the saddle** — it will say your channel number in local chat (owner-only). Note it down.
+2. Drop `mount_transmitter.lsl` into the prim's Contents.
+3. Attach the prim to a comfortable point (Spine, Chest, or Pelvis).
+
+The script automatically sets the prim to **Phantom** on startup.
 
 ### Step 2 — Rider sets up the Follower
-1. Create a small prim. Set it to **Phantom**.
-2. Open `rider_follower.lsl` and replace the channel on this line with the number from Step 1:
-   ```lsl
-   integer gChannel = -88881234; // <-- paste mount's channel here
-   ```
-3. (Optional) Drop your riding animation, named exactly `riding_pose`, into the prim's Contents.
-4. Drop the edited script into the prim's Contents.
-5. Attach the prim to **Avatar Center**.
+1. Create a small prim.
+2. (Optional) Drop your riding animation, named exactly `riding_pose`, into the prim's Contents.
+3. Drop `rider_follower.lsl` into the prim's Contents.
+4. Attach the prim to **Avatar Center**.
 
-### Step 3 — Mount up
-1. Mount stands still.
-2. Rider touches their Follower prim → it starts tracking.
-3. Rider may be prompted to grant **animation permissions** — accept.
-4. Rider is pulled to the mount's back. Mount can now walk, run, and use her AO normally.
+The script automatically sets the prim to **Phantom** on startup.
+
+### Step 3 — Pair
+1. **Mount touches her saddle.** This sends a pairing signal on the discovery channel.
+2. **Rider sees a dialog**: *"[MountName]'s saddle is nearby. Pair and start following?"*
+3. Rider clicks **Yes**.
+4. Rider may be prompted to grant **animation permissions** — accept.
+
+That's it. No channel numbers to share or paste.
+
+> The pairing dialog also appears automatically every 10 seconds while the saddle is worn,
+> so the rider doesn't need to do anything if they attach their prim after the mount is already wearing hers.
 
 ### Step 4 — Dismount
-- Rider touches their Follower prim again to stop tracking, **or**
+- Rider touches their Follower prim to stop tracking, **or**
 - Rider detaches the prim (the script stops all animations and movement cleanly).
+
+### Re-pairing
+Touch the Follower prim while stopped to resume following the same mount (channel is remembered for the session). If the mount re-attaches her saddle, touch the saddle again to send a fresh pairing signal.
 
 ---
 
@@ -49,7 +55,6 @@ All tuning values are at the top of `rider_follower.lsl`:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `gChannel` | `-88881234` | Must match mount's broadcast channel |
 | `SADDLE_OFFSET` | `<0,0,0.8>` | Position of rider relative to mount's origin (metres, local space) |
 | `FOLLOW_TAU` | `0.1` | `llMoveToTarget` responsiveness. Lower = snappier, higher = smoother |
 | `ROT_STRENGTH` | `0.5` | How quickly the rider rotates to match the mount's heading |
@@ -66,19 +71,6 @@ Start with `<0.0, 0.0, 0.8>` and adjust Z until the rider sits at saddle height.
 
 ---
 
-## Automatic Channel Setup (No Manual Pasting)
-
-Instead of copy-pasting a channel number, you can automate it with a notecard:
-
-1. The mount creates a plain-text notecard containing **one line**: her saddle prim's UUID  
-   (found in Edit > General tab > "Key" field).
-2. Drop the notecard, named exactly `mount_key`, into the Rider prim's Contents.
-3. In `rider_follower.lsl`, un-comment the three blocks marked `// ---- Optional`.
-
-The rider script will read the UUID, derive the channel with the same formula the mount uses, and connect automatically.
-
----
-
 ## Known Limitations
 
 ### Rubber-banding
@@ -89,8 +81,8 @@ At high speed or sharp turns, the rider will lag 1–3 frames behind the mount. 
 ### Sim Crossings
 Both avatars cross region borders independently under their own movement. The rider will briefly snap/rubber-band during the crossing, then automatically re-acquire once both are in the new region. The mount should slow to a walk at sim borders.
 
-### Two Pairs on the Same Region
-Each saddle derives its channel from its own object UUID, so two different mount/rider pairs will always be on different channels. No configuration needed.
+### Multiple Mounts on the Same Region
+Each saddle derives its channel from the **mount owner's avatar key**, so two different mount/rider pairs are always on different channels. If two mounts touch their saddles at the same moment, each rider's dialog will show the correct mount's name — just click the one you want.
 
 ### The Rider's AO
 The follower suppresses SL's default `sit` and `stand` animations. The rider's own AO (if they wear one) will continue to run unless it detects the `riding_pose` animation and overrides it — which is the correct behaviour for a well-configured AO.
@@ -100,12 +92,25 @@ If the rider's attachment is forcibly removed without the script running (e.g. S
 
 ---
 
-## How the Channel Derivation Works
+## How It Works
 
-Both scripts use the same formula so they always agree:
+### Automatic Pairing (Discovery Channel)
+Both scripts share a fixed private channel (`-7654321`) used only for pairing. When the mount touches her saddle (or every 10 seconds automatically), the transmitter broadcasts:
 
-```lsl
-integer channel = -(integer)("0x" + llGetSubString((string)objectKey, 0, 6));
+```
+SADDLE_PAIR|<mount_avatar_key>|<mount_name>|<data_channel>
 ```
 
-This takes the first 7 hex characters of the UUID, converts them to a positive integer, and negates it. The result is a large negative channel number that is unique per object and consistent across sessions (the UUID never changes for a no-copy object).
+The rider's script hears this, shows an `llDialog` confirmation, and on **Yes** switches its listener to the data channel and begins following.
+
+### Stable Channel Derivation
+The data channel is derived from the **mount owner's avatar key** (not the object key):
+
+```lsl
+integer channel = -(integer)("0x" + llGetSubString((string)ownerKey, 0, 6));
+```
+
+Avatar keys never change, so the channel is identical every session. The rider only needs to re-pair if switching to a different mount.
+
+### Position Tracking
+Once paired, the mount transmitter broadcasts `<pos>|<rot>` at 10 Hz. The rider script calls `llMoveToTarget` and `llRotLookAt` each time a packet arrives, keeping the rider physically locked to the mount's back.

@@ -2,27 +2,22 @@
 // Worn by: The RIDER avatar
 // Purpose: Listens for the mount's position/rotation broadcast and uses
 //          llMoveToTarget to physically place the rider on the mount's
-//          back. Suppresses SL's default sit pose and plays a custom
-//          riding animation instead.
+//          back. Pairs automatically -- when a saddle is nearby, a dialog
+//          appears asking the rider to confirm the connection. No channel
+//          number needs to be copy-pasted.
 //
 // Setup:
 //   1. Drop this script into the rider pose prim.
 //   2. Drop your riding animation (named "riding_pose") into the prim inventory.
 //      If you have no custom animation, the script still works -- it will
 //      just suppress the default sit pose and leave the rider in their AO.
-//   3. Set gChannel below to match the mount's channel (or use notecard).
-//   4. Adjust SADDLE_OFFSET so the rider sits at the right height/position.
+//   3. Adjust SADDLE_OFFSET so the rider sits at the right height/position.
+//   4. Have the mount touch her saddle; a pairing dialog will appear on
+//      your screen. Click Yes to start following.
 //   (Phantom is set automatically by the script.)
 // ------------------------------------------------------------------------
 
 // ---- CONFIGURATION -----------------------------------------------------
-
-// Channel must match the mount's derived channel.
-// Method A (simplest): mount touches her saddle, tells you the number,
-//                      paste it here.
-// Method B (automatic): store the mount's object UUID in a notecard named
-//                       "mount_key" and un-comment the notecard loader below.
-integer gChannel = -88881234; // <-- Replace with your mount's channel
 
 // Offset in LOCAL saddle space: X=forward, Y=left, Z=up.
 // Rotated into world space before applying, so it always tracks correctly.
@@ -40,46 +35,53 @@ float ROT_DAMPING  = 0.1;
 // Set to "" to skip custom animation (rider AO plays instead).
 string RIDING_ANIM = "riding_pose";
 
+// Fixed discovery channel -- must match DISCOVERY_CHANNEL in mount_transmitter.lsl.
+integer DISCOVERY_CHANNEL = -7654321;
+
 // ---- ANIMATION LIST TO SUPPRESS ----------------------------------------
 // SL may inject any of these when the rider's avatar state changes.
 list SUPPRESS_ANIMS = ["sit", "sit_generic", "sit_to_stand", "stand",
                        "stand_1", "stand_2", "stand_3", "stand_4"];
 
 // ---- GLOBALS -----------------------------------------------------------
-integer gListener  = -1;
-integer gRiding    = FALSE;
-integer gHasPerms  = FALSE;
+integer gChannel           = 0;  // 0 = not yet paired
+integer gListener          = -1; // Data channel listener handle
+integer gDiscoveryListener = -1; // Discovery channel listener handle
+integer gDialogChannel;          // Private channel for llDialog responses
+integer gDialogListener    = -1; // Dialog response listener handle
+integer gRiding            = FALSE;
+integer gHasPerms          = FALSE;
+integer gPendingChannel    = 0;  // Channel offered by a nearby saddle
 
 // ---- HELPERS -----------------------------------------------------------
 
 startRiding()
 {
-    // Remove old listener if any, then open a fresh one.
     if (gListener != -1) llListenRemove(gListener);
     gListener = llListen(gChannel, "", NULL_KEY, "");
     gRiding   = TRUE;
-    llOwnerSay("[Rider] Following on channel " + (string)gChannel
-               + ". Touch to stop.");
 
-    // Request animation permissions (auto-granted for attachments to owner).
+    // While riding, close discovery and dialog listeners to save resources.
+    if (gDiscoveryListener != -1) { llListenRemove(gDiscoveryListener); gDiscoveryListener = -1; }
+    if (gDialogListener    != -1) { llListenRemove(gDialogListener);    gDialogListener    = -1; }
+
+    llOwnerSay("[Rider] Following on channel " + (string)gChannel + ". Touch to stop.");
     llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
 }
 
 stopRiding()
 {
-    if (gListener != -1)
-    {
-        llListenRemove(gListener);
-        gListener = -1;
-    }
+    if (gListener != -1) { llListenRemove(gListener); gListener = -1; }
     llStopMoveToTarget();
     gRiding = FALSE;
 
-    // Stop our custom animation cleanly.
-    if (gHasPerms && RIDING_ANIM != "")
-        llStopAnimation(RIDING_ANIM);
+    if (gHasPerms && RIDING_ANIM != "") llStopAnimation(RIDING_ANIM);
 
-    llOwnerSay("[Rider] Follower stopped. Touch to resume.");
+    // Reopen discovery listener so a new (or same) saddle can re-pair.
+    if (gDiscoveryListener == -1)
+        gDiscoveryListener = llListen(DISCOVERY_CHANNEL, "", NULL_KEY, "");
+
+    llOwnerSay("[Rider] Follower stopped. Listening for nearby saddles...");
 }
 
 suppressDefaultAnims()
@@ -89,32 +91,16 @@ suppressDefaultAnims()
         llStopAnimation(llList2String(SUPPRESS_ANIMS, i));
 }
 
-// ---- NOTECARD CHANNEL LOADER (optional) --------------------------------
-// If you want automatic channel setup, store the mount's object key in a
-// notecard named "mount_key" (one line, just the UUID). Un-comment this
-// block and the dataserver event below.
-//
-// key gNCQuery;
-// loadMountKey()
-// {
-//     if (llGetInventoryType("mount_key") != INVENTORY_NOTECARD)
-//     {
-//         llOwnerSay("[Rider] No 'mount_key' notecard found. Using hardcoded channel.");
-//         startRiding();
-//         return;
-//     }
-//     gNCQuery = llGetNotecardLine("mount_key", 0);
-// }
-
 // ========================================================================
 default
 {
     state_entry()
     {
         llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_PHANTOM, TRUE]);
-        llOwnerSay("[Rider] Follower attachment ready. Touch to start/stop.");
-        // Auto-start on rez/attach. Remove this line if you prefer manual start.
-        startRiding();
+        // Private dialog channel derived from this prim's key.
+        gDialogChannel     = -(integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
+        gDiscoveryListener = llListen(DISCOVERY_CHANNEL, "", NULL_KEY, "");
+        llOwnerSay("[Rider] Ready. Have the mount touch her saddle to send a pairing signal.");
     }
 
     run_time_permissions(integer perms)
@@ -134,27 +120,86 @@ default
 
     listen(integer channel, string name, key id, string msg)
     {
-        // Parse "pos|rot" broadcast from mount.
-        list     data     = llParseString2List(msg, ["|"], []);
-        if (llGetListLength(data) < 2) return; // Malformed packet, ignore.
+        // -- Discovery: incoming saddle pairing offer --
+        if (channel == DISCOVERY_CHANNEL)
+        {
+            list parts = llParseString2List(msg, ["|"], []);
+            if (llList2String(parts, 0) != "SADDLE_PAIR") return;
+            if (llGetListLength(parts) < 4) return;
 
-        vector   mountPos = (vector)  llList2String(data, 0);
-        rotation mountRot = (rotation)llList2String(data, 1);
+            gPendingChannel = (integer)llList2String(parts, 3);
+            string mountName = llList2String(parts, 2);
 
-        // Rotate the saddle offset into world space so it always points
-        // "up from the mount's back" regardless of her heading.
-        vector worldOffset = SADDLE_OFFSET * mountRot;
+            // Show pairing confirmation dialog to rider.
+            if (gDialogListener != -1) llListenRemove(gDialogListener);
+            gDialogListener = llListen(gDialogChannel, "", llGetOwner(), "");
+            llDialog(llGetOwner(),
+                "\n" + mountName + "'s saddle is nearby.\nPair and start following?",
+                ["Yes", "No"],
+                gDialogChannel);
+            llSetTimerEvent(30.0); // Expire dialog after 30 seconds
+            return;
+        }
 
-        llMoveToTarget(mountPos + worldOffset, FOLLOW_TAU);
-        llRotLookAt(mountRot, ROT_STRENGTH, ROT_DAMPING);
+        // -- Dialog response --
+        if (channel == gDialogChannel)
+        {
+            llListenRemove(gDialogListener);
+            gDialogListener = -1;
+            llSetTimerEvent(0.0);
+
+            if (msg == "Yes")
+            {
+                gChannel = gPendingChannel;
+                llOwnerSay("[Rider] Paired! Channel: " + (string)gChannel);
+                startRiding();
+            }
+            else
+            {
+                llOwnerSay("[Rider] Pairing declined.");
+                gPendingChannel = 0;
+            }
+            return;
+        }
+
+        // -- Riding data: pos/rot broadcast from mount --
+        if (channel == gChannel)
+        {
+            list     data     = llParseString2List(msg, ["|"], []);
+            if (llGetListLength(data) < 2) return; // Malformed packet, ignore.
+
+            vector   mountPos = (vector)  llList2String(data, 0);
+            rotation mountRot = (rotation)llList2String(data, 1);
+
+            // Rotate the saddle offset into world space so it always points
+            // "up from the mount's back" regardless of her heading.
+            vector worldOffset = SADDLE_OFFSET * mountRot;
+
+            llMoveToTarget(mountPos + worldOffset, FOLLOW_TAU);
+            llRotLookAt(mountRot, ROT_STRENGTH, ROT_DAMPING);
+        }
     }
 
     // Touch to toggle follow on/off.
     touch_start(integer n)
     {
         if (llDetectedKey(0) != llGetOwner()) return;
-        if (gRiding) stopRiding();
-        else         startRiding();
+        if (gRiding)          stopRiding();
+        else if (gChannel != 0) startRiding();
+        else llOwnerSay("[Rider] Not paired yet. Have the mount touch her saddle.");
+    }
+
+    // Dialog timed out -- clean up.
+    timer()
+    {
+        if (gDialogListener != -1)
+        {
+            llListenRemove(gDialogListener);
+            gDialogListener = -1;
+            gPendingChannel = 0;
+        }
+        llSetTimerEvent(0.0);
+        llOwnerSay("[Rider] Pairing dialog timed out.");
     }
 
     // Stop cleanly on detach; re-init on re-attach.
@@ -162,40 +207,22 @@ default
     {
         if (id == NULL_KEY)
         {
-            // Detaching -- stop everything to prevent ghost animations/movement.
             stopRiding();
         }
         else
         {
-            // Re-attaching -- reset and auto-start.
+            // Reset state on re-attach.
             gHasPerms = FALSE;
-            startRiding();
+            gChannel  = 0;
+            gDialogChannel = -(integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
+            if (gDiscoveryListener != -1) { llListenRemove(gDiscoveryListener); gDiscoveryListener = -1; }
+            gDiscoveryListener = llListen(DISCOVERY_CHANNEL, "", NULL_KEY, "");
+            llOwnerSay("[Rider] Re-attached. Have the mount touch her saddle to pair.");
         }
     }
 
-    // Re-request permissions after owner change.
     changed(integer change)
     {
         if (change & CHANGED_OWNER) llResetScript();
     }
-
-    // ---- Optional notecard dataserver handler (un-comment to enable) ---
-    // dataserver(key query_id, string data)
-    // {
-    //     if (query_id != gNCQuery) return;
-    //     if (data == EOF || data == "")
-    //     {
-    //         llOwnerSay("[Rider] 'mount_key' notecard is empty.");
-    //         return;
-    //     }
-    //     key mountKey = (key)llStringTrim(data, STRING_TRIM);
-    //     if (mountKey == NULL_KEY)
-    //     {
-    //         llOwnerSay("[Rider] 'mount_key' notecard contains an invalid UUID.");
-    //         return;
-    //     }
-    //     gChannel = -(integer)("0x" + llGetSubString((string)mountKey, 0, 6));
-    //     llOwnerSay("[Rider] Channel set from notecard: " + (string)gChannel);
-    //     startRiding();
-    // }
 }
