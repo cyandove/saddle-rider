@@ -40,12 +40,26 @@ That's it. No channel numbers to share or paste.
 > The pairing dialog also appears automatically every 10 seconds while the saddle is worn,
 > so the rider doesn't need to do anything if they attach their prim after the mount is already wearing hers.
 
-### Step 4 — Dismount
-- Rider touches their Follower prim to stop tracking, **or**
+### Step 4 — Adjust offset (optional)
+Touch the Follower prim while stopped to open the offset adjustment menu:
+
+```
+[Step ][Reset][Done ]
+[Y+   ][Z-   ][Z+   ]
+[X-   ][X+   ][Y-   ]
+```
+
+- **X** moves the rider forward/back, **Y** left/right, **Z** up/down
+- **Step** cycles the increment: 0.05 m → 0.10 m → 0.25 m → 0.05 m
+- **Reset** returns the offset to `<0, 0, 0.8>`
+- **Done** saves the offset and starts following (if paired)
+
+### Step 5 — Dismount
+- Rider touches their Follower prim to stop tracking (offset menu opens automatically), **or**
 - Rider detaches the prim (the script stops all animations and movement cleanly).
 
 ### Re-pairing
-Touch the Follower prim while stopped to resume following the same mount (channel is remembered for the session). If the mount re-attaches her saddle, touch the saddle again to send a fresh pairing signal.
+If the mount re-attaches her saddle, touch the saddle again to send a fresh pairing signal. Clicking **Done** in the offset menu will restart following with the current paired channel.
 
 ---
 
@@ -53,21 +67,21 @@ Touch the Follower prim while stopped to resume following the same mount (channe
 
 All tuning values are at the top of `rider_follower.lsl`:
 
-| Variable | Default | Effect |
+| Variable | Default | How to change |
 |---|---|---|
-| `SADDLE_OFFSET` | `<0,0,0.8>` | Position of rider relative to mount's origin (metres, local space) |
-| `FOLLOW_TAU` | `0.1` | `llMoveToTarget` responsiveness. Lower = snappier, higher = smoother |
-| `ROT_STRENGTH` | `0.5` | How quickly the rider rotates to match the mount's heading |
-| `ROT_DAMPING` | `0.1` | Rotation damping — reduces spinning overshoot |
-| `RIDING_ANIM` | `"riding_pose"` | Name of the animation in prim inventory. Set to `""` to skip |
+| `gSaddleOffset` | `<0,0,0.8>` | Touch menu (X/Y/Z buttons), or edit the script |
+| `FOLLOW_TAU` | `0.1` | Edit script — lower = snappier tracking, higher = smoother/floatier |
+| `ROT_STRENGTH` | `0.5` | Edit script — how quickly the rider rotates to match mount's heading |
+| `ROT_DAMPING` | `0.1` | Edit script — reduces spinning overshoot |
+| `RIDING_ANIM` | `"riding_pose"` | Edit script — name of animation in prim inventory; `""` to skip |
 
-### Tuning SADDLE_OFFSET
+### Tuning the saddle offset
 The offset is in the mount's **local space**, rotated into world space before applying:
 - `X` = forward/back along mount's body
 - `Y` = left/right
 - `Z` = up/down (height above mount's origin)
 
-Start with `<0.0, 0.0, 0.8>` and adjust Z until the rider sits at saddle height. If the mount's origin is at her waist, `0.8` places the rider roughly at her shoulders — tune to taste.
+The easiest way to tune it is in-world: start following, stop, open the touch menu, and nudge X/Y/Z until the rider sits correctly. The default `<0, 0, 0.8>` places the rider 0.8 m above the mount's origin — adjust Z first, then X/Y for fore-aft and lateral position.
 
 ---
 
